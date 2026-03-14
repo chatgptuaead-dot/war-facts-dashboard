@@ -526,17 +526,52 @@ async function refreshNewsAPI() {
 // ─── Country RSS feeds ────────────────────────────────────────────────────────
 
 const COUNTRY_RSS = {
-  Israel:               ['https://www.jpost.com/Rss/RssFeedsMiddleEast.aspx'],
-  Iran:                 ['https://en.irna.ir/rss'],
-  Lebanon:              ['https://www.nna-leb.gov.lb/en/rss'],
-  Iraq:                 ['https://www.ina.iq/services/rss'],
-  'Saudi Arabia':       ['https://www.spa.gov.sa/rss/rssnewen.xml'],
-  'United Arab Emirates': ['https://wam.ae/en/rss'],
-  Qatar:                ['https://www.qna.org.qa/en/rss'],
-  Bahrain:              ['https://bna.bh/en/?format=feed&type=rss'],
-  Kuwait:               ['https://www.kuna.net.kw/feeds/rss.aspx'],
-  Oman:                 ['https://onaeng.com/feed'],
-  Palestine:            ['https://news.google.com/rss/search?q=Gaza+Palestine+war&hl=en'],
+  Israel:                 [
+    'https://news.google.com/rss/search?q=Israel+military+war+attack&hl=en&gl=US&ceid=US:en',
+    'https://www.jpost.com/Rss/RssFeedsMiddleEast.aspx',
+  ],
+  Iran:                   [
+    'https://news.google.com/rss/search?q=Iran+military+IRGC+attack+nuclear&hl=en&gl=US&ceid=US:en',
+    'https://en.irna.ir/rss',
+  ],
+  Lebanon:                [
+    'https://news.google.com/rss/search?q=Lebanon+Hezbollah+military+attack&hl=en&gl=US&ceid=US:en',
+    'https://www.nna-leb.gov.lb/en/rss',
+  ],
+  Iraq:                   [
+    'https://news.google.com/rss/search?q=Iraq+militia+military+attack&hl=en&gl=US&ceid=US:en',
+    'https://www.ina.iq/services/rss',
+  ],
+  'United States':        [
+    'https://news.google.com/rss/search?q=US+military+Middle+East+Pentagon+CENTCOM&hl=en&gl=US&ceid=US:en',
+  ],
+  'Saudi Arabia':         [
+    'https://news.google.com/rss/search?q="Saudi+Arabia"+military+security+attack&hl=en&gl=US&ceid=US:en',
+    'https://www.spa.gov.sa/rss/rssnewen.xml',
+  ],
+  'United Arab Emirates': [
+    'https://news.google.com/rss/search?q=UAE+"United+Arab+Emirates"+military+security&hl=en&gl=US&ceid=US:en',
+    'https://wam.ae/en/rss',
+  ],
+  Qatar:                  [
+    'https://news.google.com/rss/search?q=Qatar+military+security+base&hl=en&gl=US&ceid=US:en',
+    'https://www.qna.org.qa/en/rss',
+  ],
+  Bahrain:                [
+    'https://news.google.com/rss/search?q=Bahrain+military+navy+security&hl=en&gl=US&ceid=US:en',
+    'https://bna.bh/en/?format=feed&type=rss',
+  ],
+  Kuwait:                 [
+    'https://news.google.com/rss/search?q=Kuwait+military+security&hl=en&gl=US&ceid=US:en',
+    'https://www.kuna.net.kw/feeds/rss.aspx',
+  ],
+  Oman:                   [
+    'https://news.google.com/rss/search?q=Oman+military+Hormuz+security&hl=en&gl=US&ceid=US:en',
+    'https://onaeng.com/feed',
+  ],
+  Palestine:              [
+    'https://news.google.com/rss/search?q=Gaza+Palestine+war+attack+strike&hl=en&gl=US&ceid=US:en',
+  ],
 };
 
 const HORMUZ_FEEDS = [
@@ -545,10 +580,8 @@ const HORMUZ_FEEDS = [
 ];
 
 async function fetchCountryNews(country) {
-  if (
-    cache.countryNews.data[country] &&
-    Date.now() - cache.countryNews.ts < COUNTRY_TTL
-  ) return cache.countryNews.data[country];
+  const cached = cache.countryNews.data[country];
+  if (cached?.articles && Date.now() - cached.ts < COUNTRY_TTL) return cached.articles;
 
   const feeds = COUNTRY_RSS[country] || [];
   for (const url of feeds) {
@@ -559,11 +592,10 @@ async function fetchCountryNews(country) {
           title: stripHtml(item.title || 'No title'),
           url: item.link || item.guid || '#',
           date: item.pubDate || item.isoDate || null,
-          source: item.creator || url.split('/')[2] || 'Official Source',
+          source: item.creator || url.split('/')[2] || 'News',
           description: extractExcerpt(item),
         }));
-        cache.countryNews.data[country] = articles;
-        cache.countryNews.ts = Date.now();
+        cache.countryNews.data[country] = { articles, ts: Date.now() };
         return articles;
       }
     } catch {}
