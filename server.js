@@ -389,23 +389,23 @@ const COUNTRY_KEYWORDS = {
 };
 
 async function fetchGDELTAll() {
-  // Single query covering all target countries — avoids rate-limit from parallel requests
+  // Single query — keep timespan short (30d) for reliable fast response
   const query = `(Israel OR Iran OR Gaza OR Lebanon OR Iraq OR "Saudi Arabia" OR Hezbollah OR Houthi OR Hamas OR IRGC) (missile OR drone OR airstrike OR shelling OR bombing OR "rocket attack" OR "military strike")`;
   const qs = new URLSearchParams({
     query,
     mode: 'artlist',
     format: 'json',
-    timespan: '90d',
+    timespan: '30d',
     maxrecords: '250',
-    sourcelang: 'english',
   });
   try {
-    const res = await fetchWithTimeout(`${GDELT_BASE}?${qs}`, {}, 20000);
+    const res = await fetchWithTimeout(`${GDELT_BASE}?${qs}`, {}, 25000);
     if (!res.ok) return [];
     const text = await res.text();
     if (!text || !text.trim().startsWith('{')) return [];
     const json = JSON.parse(text);
-    return json.articles || [];
+    // Filter to English only — sourcelang param is unreliable
+    return (json.articles || []).filter(a => a.language === 'English');
   } catch (e) {
     console.error('[GDELT]', e.message);
     return [];
@@ -720,19 +720,30 @@ app.get('/api/all', async (req, res) => {
         .filter((a, i, arr) => arr.findIndex(b => b.url === a.url) === i)
         .slice(0, 5);
 
+      // Use RSS news as 48h incidents — they're fresh and in English
+      const incidents = allNews.slice(0, 4).map(a => ({
+        date: a.date,
+        type: inferEventType(a.title),
+        notes: a.title,
+        url: a.url,
+        source: a.source,
+      }));
+
+      const hasActivity = incidents.length > 0 || (conflict.missiles || 0) + (conflict.drones || 0) + (conflict.airstrikes || 0) > 0;
+
       let status = 'NO DATA';
-      if (conflict.hasRecentEvents) status = 'ACTIVE';
+      if (conflict.hasRecentEvents || (hasActivity && incidents.length > 0)) status = 'ACTIVE';
       else if (allNews.length > 0) status = 'MONITORING';
 
       return {
         ...c,
         status,
-        missiles:          conflict.missiles   || 0,
-        drones:            conflict.drones     || 0,
-        airstrikes:        conflict.airstrikes || 0,
-        dataSource:        conflict.dataSource || (useACLED ? 'ACLED' : 'GDELT'),
-        last48hIncidents:  conflict.last48hIncidents || [],
-        news:              allNews,
+        missiles:         conflict.missiles   || 0,
+        drones:           conflict.drones     || 0,
+        airstrikes:       conflict.airstrikes || 0,
+        dataSource:       conflict.dataSource || (useACLED ? 'ACLED' : 'GDELT'),
+        last48hIncidents: incidents,
+        news:             allNews,
       };
     });
 
