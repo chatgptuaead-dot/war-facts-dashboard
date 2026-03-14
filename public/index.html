@@ -11,8 +11,8 @@
 <style>
 :root {
   --bg-base: #0b0f1a;
-  --bg-card: #131929;
-  --bg-card-hover: #18203a;
+  --bg-card: #151d2e;
+  --bg-card-hover: #1a2236;
   --bg-card-alt: #111827;
   --border: rgba(255,255,255,0.10);
   --border-bright: rgba(255,255,255,0.22);
@@ -175,7 +175,7 @@ main {
   font-weight: 700;
   letter-spacing: 2.5px;
   text-transform: uppercase;
-  color: var(--text-secondary);
+  color: #d0ddf0;
   white-space: nowrap;
 }
 
@@ -209,7 +209,7 @@ main {
 }
 
 .isw-card {
-  background: #141a2e;
+  background: #16203a;
   border: 1px solid rgba(196,181,253,0.2);
   border-top: 2px solid rgba(196,181,253,0.5);
   border-radius: 10px;
@@ -286,7 +286,7 @@ main {
   border: 1px solid var(--border-bright);
   border-radius: 12px;
   padding: 28px;
-  height: 380px;
+  height: 420px;
   position: relative;
 }
 
@@ -316,7 +316,7 @@ main {
   align-items: center;
   justify-content: space-between;
   padding: 16px 22px;
-  background: #161d30;
+  background: #1a2438;
   border-bottom: 1px solid var(--border-bright);
   gap: 12px;
   flex-wrap: wrap;
@@ -370,7 +370,7 @@ main {
   font-weight: 700;
   letter-spacing: 2px;
   text-transform: uppercase;
-  color: var(--text-dim);
+  color: #a0b0cc;
   margin-bottom: 12px;
   font-family: var(--font-mono);
 }
@@ -383,7 +383,7 @@ main {
   gap: 8px;
   padding: 5px 10px;
   border-radius: 6px;
-  background: rgba(255,255,255,0.03);
+  background: rgba(255,255,255,0.05);
 }
 
 .stat-label { font-size: 12px; color: var(--text-secondary); }
@@ -413,7 +413,7 @@ main {
 .news-section {
   padding: 16px 22px;
   border-top: 1px solid var(--border);
-  background: rgba(0,0,0,0.15);
+  background: #10172a;
 }
 
 .news-item {
@@ -618,12 +618,17 @@ footer a:hover { color: #bfdbfe; }
   <!-- 2. MISSILE/DRONE CHART -->
   <section id="sec-chart">
     <div class="section-header">
-      <span class="section-badge badge-red">ACLED</span>
-      <span class="section-title">Strike Activity by Country — Last 90 Days</span>
+      <span class="section-badge badge-red">GDELT</span>
+      <span class="section-title">Strike Activity by Country — Last 30 Days</span>
       <div class="section-line"></div>
     </div>
     <div class="chart-container">
       <canvas id="strikeChart"></canvas>
+      <div id="chart-no-data" style="display:none;position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#8899bb;font-family:'Courier New',monospace;font-size:12px;">
+        <div style="font-size:28px;opacity:0.3">📊</div>
+        <div>Loading strike data from GDELT…</div>
+        <div style="font-size:10px;opacity:0.7">Data refreshes every 15 minutes</div>
+      </div>
     </div>
   </section>
 
@@ -732,10 +737,16 @@ function renderISW(articles) {
 // ─── Render: Strike Chart ─────────────────────────────────────────────────────
 function renderChart(countries) {
   const ctx = document.getElementById('strikeChart').getContext('2d');
+  const noData = document.getElementById('chart-no-data');
   const labels = countries.map(c => `${c.flag} ${c.name.split(' ').slice(-1)[0]}`);
   const missiles   = countries.map(c => c.missiles);
   const drones     = countries.map(c => c.drones);
   const airstrikes = countries.map(c => c.airstrikes);
+
+  const allZero = missiles.every(v => v === 0) && drones.every(v => v === 0) && airstrikes.every(v => v === 0);
+
+  if (noData) noData.style.display = allZero ? 'flex' : 'none';
+  ctx.canvas.style.opacity = allZero ? '0' : '1';
 
   if (strikeChart) strikeChart.destroy();
 
@@ -745,28 +756,31 @@ function renderChart(countries) {
       labels,
       datasets: [
         {
-          label: 'Missile/Artillery',
+          label: 'Missile / Artillery',
           data: missiles,
-          backgroundColor: 'rgba(248,113,113,0.75)',
+          backgroundColor: 'rgba(248,113,113,0.8)',
           borderColor: '#f87171',
           borderWidth: 1,
-          borderRadius: 4,
+          borderRadius: 5,
+          borderSkipped: false,
         },
         {
-          label: 'Drone/UAV',
+          label: 'Drone / UAV',
           data: drones,
-          backgroundColor: 'rgba(251,191,36,0.75)',
+          backgroundColor: 'rgba(251,191,36,0.8)',
           borderColor: '#fbbf24',
           borderWidth: 1,
-          borderRadius: 4,
+          borderRadius: 5,
+          borderSkipped: false,
         },
         {
           label: 'Airstrikes',
           data: airstrikes,
-          backgroundColor: 'rgba(147,197,253,0.7)',
+          backgroundColor: 'rgba(147,197,253,0.75)',
           borderColor: '#93c5fd',
           borderWidth: 1,
-          borderRadius: 4,
+          borderRadius: 5,
+          borderSkipped: false,
         },
       ],
     },
@@ -776,27 +790,54 @@ function renderChart(countries) {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: {
-          labels: { color: '#c1cfe8', font: { size: 12 }, boxWidth: 14, padding: 20 },
+          labels: {
+            color: '#c1cfe8',
+            font: { size: 12, weight: '600' },
+            boxWidth: 14,
+            boxHeight: 14,
+            padding: 24,
+            usePointStyle: true,
+            pointStyle: 'rectRounded',
+          },
           position: 'top',
         },
         tooltip: {
-          backgroundColor: 'rgba(19,25,41,0.97)',
+          backgroundColor: 'rgba(13,18,35,0.97)',
           borderColor: 'rgba(255,255,255,0.2)',
           borderWidth: 1,
           titleColor: '#f0f4ff',
           bodyColor: '#c1cfe8',
-          padding: 12,
+          padding: 14,
+          callbacks: {
+            title: (items) => items[0].label.replace(/\p{Emoji}/u, '').trim(),
+          },
         },
       },
       scales: {
         x: {
-          ticks: { color: '#c1cfe8', font: { size: 11 } },
-          grid: { color: 'rgba(255,255,255,0.07)' },
+          ticks: {
+            color: '#c1cfe8',
+            font: { size: 12 },
+            maxRotation: 0,
+          },
+          grid: { color: 'rgba(255,255,255,0.06)' },
         },
         y: {
-          ticks: { color: '#c1cfe8', font: { size: 11 } },
-          grid: { color: 'rgba(255,255,255,0.07)' },
-          title: { display: true, text: 'Media mentions (30 days)', color: '#8899bb', font: { size: 11 } },
+          min: 0,
+          ticks: {
+            color: '#c1cfe8',
+            font: { size: 11 },
+            stepSize: 1,
+            precision: 0,
+            callback: (v) => Number.isInteger(v) ? v : null,
+          },
+          grid: { color: 'rgba(255,255,255,0.06)' },
+          title: {
+            display: true,
+            text: 'Media mentions (30 days)',
+            color: '#8899bb',
+            font: { size: 11 },
+          },
         },
       },
     },

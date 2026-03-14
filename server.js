@@ -388,8 +388,7 @@ const COUNTRY_KEYWORDS = {
   'Oman':                   /\boman\b|\bmuscat\b/i,
 };
 
-async function fetchGDELTAll() {
-  // Single query — keep timespan short (30d) for reliable fast response
+async function fetchGDELTAll(attempt = 0) {
   const query = `(Israel OR Iran OR Gaza OR Lebanon OR Iraq OR "Saudi Arabia" OR Hezbollah OR Houthi OR Hamas OR IRGC) (missile OR drone OR airstrike OR shelling OR bombing OR "rocket attack" OR "military strike")`;
   const qs = new URLSearchParams({
     query,
@@ -402,10 +401,17 @@ async function fetchGDELTAll() {
     const res = await fetchWithTimeout(`${GDELT_BASE}?${qs}`, {}, 25000);
     if (!res.ok) return [];
     const text = await res.text();
-    if (!text || !text.trim().startsWith('{')) return [];
+    if (!text || !text.trim().startsWith('{')) {
+      // Rate limited — wait and retry once
+      if (attempt === 0) {
+        console.log('[GDELT] Rate limited, retrying in 8s…');
+        await new Promise(r => setTimeout(r, 8000));
+        return fetchGDELTAll(1);
+      }
+      return [];
+    }
     const json = JSON.parse(text);
-    // Filter to English only — sourcelang param is unreliable
-    return (json.articles || []).filter(a => a.language === 'English');
+    return json.articles || [];
   } catch (e) {
     console.error('[GDELT]', e.message);
     return [];
