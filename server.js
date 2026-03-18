@@ -143,7 +143,7 @@ const ISW_KEYWORDS = /iran|israel|middle east|gaza|lebanon|iraq|hormuz|hezbollah
 
 // Scrape the full body of a single ISW article (WordPress .entry-content) → up to 5 key points
 async function fetchISWArticleContent(url) {
-  if (!url || url === '#' || !url.includes('understandingwar.org')) return [];
+  if (!url || url === '#') return [];
   try {
     const res = await fetchWithTimeout(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
