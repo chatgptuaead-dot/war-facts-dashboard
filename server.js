@@ -141,7 +141,7 @@ const COUNTRY_TTL  = 15 * 60 * 1000;        // 15 min
 
 const ISW_KEYWORDS = /iran|israel|middle east|gaza|lebanon|iraq|hormuz|hezbollah|hamas|houthi|irgc|idf/i;
 
-// Scrape the full body of a single ISW article and return up to 5 key points
+// Scrape the full body of a single ISW article (WordPress .entry-content) → up to 5 key points
 async function fetchISWArticleContent(url) {
   if (!url || url === '#' || !url.includes('understandingwar.org')) return [];
   try {
@@ -153,16 +153,13 @@ async function fetchISWArticleContent(url) {
     const $ = cheerio.load(html);
 
     const points = [];
-    // ISW uses Drupal — try common content field selectors
-    const bodyEl = $(
-      '.field-name-body .field-items, .field-name-body, .field-items, .node-body, article .content'
-    ).first();
+    // ISW now runs WordPress — main article body is in .entry-content
+    const bodyEl = $('.entry-content, .post-content, .article-content, main article').first();
 
     if (bodyEl.length) {
       bodyEl.find('p, li').each((_, el) => {
         const text = $(el).text().replace(/\s+/g, ' ').trim();
-        // Skip short lines and generic headers like "Key Takeaways:"
-        if (text.length > 80 && !/^key takeaway|^sources|^\[.*\]$/i.test(text)) {
+        if (text.length > 80 && !/^key takeaway|^sources|^\[.*\]$|^share|^print/i.test(text)) {
           points.push(text.length > 600 ? text.substring(0, 600) + '…' : text);
         }
         if (points.length >= 5) return false;
@@ -177,20 +174,21 @@ async function fetchISW() {
 
   const articles = [];
 
-  // Layer 1: HTML scrape of the ISW Iran updates listing page
+  // Layer 1: HTML scrape of the ISW Iran update listing page (WordPress)
   try {
-    const res = await fetchWithTimeout('https://www.understandingwar.org/backgrounders/iran-updates', {
+    const res = await fetchWithTimeout('https://www.understandingwar.org/analysis/middle-east/iran-update/', {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
     });
     if (res.ok) {
       const html = await res.text();
       const $ = cheerio.load(html);
-      $('article, .views-row, .node').each((_, el) => {
+      // WordPress research card layout
+      $('.research-card-loop-item, article, .post').each((_, el) => {
         if (articles.length >= 5) return false;
-        const titleEl = $(el).find('h2 a, h3 a, .title a').first();
+        const titleEl = $(el).find('.research-card-title a, h2 a, h3 a, .entry-title a').first();
         const title = titleEl.text().trim();
         const href = titleEl.attr('href');
-        const dateEl = $(el).find('time, .date-display-single').first();
+        const dateEl = $(el).find('.research-card-post-date, time, .entry-date, .post-date').first();
         const excerpt = $(el).find('p').first().text().trim();
         if (title && href) {
           const url = href.startsWith('http') ? href : `https://www.understandingwar.org${href}`;
@@ -199,14 +197,15 @@ async function fetchISW() {
           }
         }
       });
+      console.log(`[ISW] Listing scrape found ${articles.length} articles`);
     }
   } catch (e) { console.error('[ISW] Listing scrape error:', e.message); }
 
-  // Layer 2: RSS fallback if listing scrape failed
+  // Layer 2: Google News RSS fallback
   if (articles.length < 3) {
     const iswFeeds = [
-      'https://www.understandingwar.org/feeds/all-recent-content',
-      'https://news.google.com/rss/search?q=site:understandingwar.org+Iran+OR+Israel+OR+Gaza&hl=en',
+      'https://news.google.com/rss/search?q=site:understandingwar.org+Iran+update&hl=en&gl=US&ceid=US:en',
+      'https://news.google.com/rss/search?q="understandingwar.org"+Iran+OR+Israel+OR+Gaza&hl=en',
     ];
     for (const feedUrl of iswFeeds) {
       if (articles.length >= 5) break;
@@ -217,7 +216,7 @@ async function fetchISW() {
             if (ISW_KEYWORDS.test(`${item.title || ''} ${item.description || ''}`)) {
               const url = item.link || item.guid || '#';
               if (!articles.find(a => a.url === url)) {
-                articles.push({ title: stripHtml(item.title || 'ISW Report'), url, date: item.pubDate || item.isoDate || null, excerpt: extractExcerpt(item), source: 'ISW RSS', keyPoints: [] });
+                articles.push({ title: stripHtml(item.title || 'ISW Report'), url, date: item.pubDate || item.isoDate || null, excerpt: extractExcerpt(item), source: 'ISW via Google News', keyPoints: [] });
               }
             }
             if (articles.length >= 5) break;
@@ -227,7 +226,7 @@ async function fetchISW() {
     }
   }
 
-  // Layer 3: Fetch full article content for each (parallel, with individual timeouts)
+  // Layer 3: Fetch full article content in parallel
   await Promise.allSettled(articles.map(async (article) => {
     article.keyPoints = await fetchISWArticleContent(article.url);
   }));
@@ -235,7 +234,7 @@ async function fetchISW() {
   articles.sort((a, b) => parseDate(b.date) - parseDate(a.date));
   const result = articles.slice(0, 5);
   cache.isw = { data: result, ts: Date.now() };
-  console.log(`[ISW] Fetched ${result.length} articles with full content`);
+  console.log(`[ISW] Fetched ${result.length} articles — key points: ${result.map(a => a.keyPoints.length).join(', ')}`);
   return result;
 }
 
