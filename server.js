@@ -374,20 +374,57 @@ function inferEventType(title) {
   return 'Military Incident';
 }
 
-// Per-country Google News RSS queries specifically for conflict activity
+// Two queries per country — combined results give ~20-40 articles vs ~10 from one query
+// Each pair covers different keyword angles to reduce blind spots
 const CONFLICT_RSS = {
-  'Israel':                 'https://news.google.com/rss/search?q=Israel+(missile+OR+drone+OR+airstrike+OR+attack+OR+bombing+OR+IDF+OR+strike)&hl=en&gl=US&ceid=US:en',
-  'Iran':                   'https://news.google.com/rss/search?q=Iran+(missile+OR+drone+OR+attack+OR+IRGC+OR+strike+OR+nuclear)&hl=en&gl=US&ceid=US:en',
-  'Lebanon':                'https://news.google.com/rss/search?q=Lebanon+(missile+OR+Hezbollah+OR+airstrike+OR+attack+OR+bombing)&hl=en&gl=US&ceid=US:en',
-  'Iraq':                   'https://news.google.com/rss/search?q=Iraq+(militia+OR+attack+OR+drone+OR+missile+OR+strike)&hl=en&gl=US&ceid=US:en',
-  'Palestine':              'https://news.google.com/rss/search?q=Gaza+(attack+OR+airstrike+OR+bombing+OR+missile+OR+strike+OR+Hamas)&hl=en&gl=US&ceid=US:en',
-  'United States':          'https://news.google.com/rss/search?q=US+military+(Middle+East+OR+airstrike+OR+strike+OR+Pentagon+OR+CENTCOM)&hl=en&gl=US&ceid=US:en',
-  'Saudi Arabia':           'https://news.google.com/rss/search?q="Saudi+Arabia"+(missile+OR+drone+OR+attack+OR+Houthi+OR+military)&hl=en&gl=US&ceid=US:en',
-  'United Arab Emirates':   'https://news.google.com/rss/search?q=UAE+(attack+OR+missile+OR+drone+OR+military+OR+security)&hl=en&gl=US&ceid=US:en',
-  'Qatar':                  'https://news.google.com/rss/search?q=Qatar+(military+OR+base+OR+attack+OR+security+OR+US+base)&hl=en&gl=US&ceid=US:en',
-  'Bahrain':                'https://news.google.com/rss/search?q=Bahrain+(military+OR+navy+OR+attack+OR+US+fleet)&hl=en&gl=US&ceid=US:en',
-  'Kuwait':                 'https://news.google.com/rss/search?q=Kuwait+(military+OR+attack+OR+security+OR+US+base)&hl=en&gl=US&ceid=US:en',
-  'Oman':                   'https://news.google.com/rss/search?q=Oman+(military+OR+Hormuz+OR+attack+OR+security)&hl=en&gl=US&ceid=US:en',
+  'Israel': [
+    'https://news.google.com/rss/search?q=Israel+(missile+OR+rocket+OR+IDF+strike+OR+airstrike+OR+bombing)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=Israel+(drone+OR+UAV+OR+attack+OR+Iron+Dome+OR+interception)&hl=en&gl=US&ceid=US:en',
+  ],
+  'Iran': [
+    'https://news.google.com/rss/search?q=Iran+(missile+OR+ballistic+OR+IRGC+strike+OR+attack+OR+nuclear)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=Iran+(drone+OR+UAV+OR+Shahed+OR+Revolutionary+Guard+OR+airstrike)&hl=en&gl=US&ceid=US:en',
+  ],
+  'Lebanon': [
+    'https://news.google.com/rss/search?q=(Lebanon+OR+Hezbollah)+(IDF+OR+airstrike+OR+Israeli+strike+OR+bombing)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=(Lebanon+OR+Hezbollah)+(missile+OR+rocket+OR+drone+OR+attack+OR+strike)&hl=en&gl=US&ceid=US:en',
+  ],
+  'Iraq': [
+    'https://news.google.com/rss/search?q=Iraq+(militia+OR+PMF+OR+drone+OR+missile+OR+attack)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=Iraq+(airstrike+OR+strike+OR+explosion+OR+base+attack+OR+Kataib)&hl=en&gl=US&ceid=US:en',
+  ],
+  'Palestine': [
+    'https://news.google.com/rss/search?q=Gaza+(airstrike+OR+bombing+OR+IDF+OR+strike+OR+Hamas)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=Gaza+(missile+OR+rocket+OR+attack+OR+invasion+OR+offensive)&hl=en&gl=US&ceid=US:en',
+  ],
+  'United States': [
+    'https://news.google.com/rss/search?q=US+military+(Middle+East+airstrike+OR+CENTCOM+strike+OR+attack)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=(Pentagon+OR+CENTCOM)+(strike+OR+drone+OR+missile+OR+bombing+OR+retaliation)&hl=en&gl=US&ceid=US:en',
+  ],
+  'Saudi Arabia': [
+    'https://news.google.com/rss/search?q="Saudi+Arabia"+(Houthi+attack+OR+missile+OR+drone+strike+OR+airstrike)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q="Saudi+Arabia"+(military+strike+OR+bombing+OR+attack+OR+interception)&hl=en&gl=US&ceid=US:en',
+  ],
+  'United Arab Emirates': [
+    'https://news.google.com/rss/search?q=UAE+(attack+OR+missile+OR+drone+OR+Houthi+OR+airstrike)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q="United+Arab+Emirates"+(strike+OR+military+attack+OR+security+threat)&hl=en&gl=US&ceid=US:en',
+  ],
+  'Qatar': [
+    'https://news.google.com/rss/search?q=Qatar+(military+base+attack+OR+US+base+Qatar+OR+airstrike)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=Qatar+(Al+Udeid+OR+military+strike+OR+drone+OR+security+threat)&hl=en&gl=US&ceid=US:en',
+  ],
+  'Bahrain': [
+    'https://news.google.com/rss/search?q=Bahrain+(attack+OR+strike+OR+Houthi+OR+drone+OR+missile+OR+threat)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=Bahrain+(Fifth+Fleet+attack+OR+naval+strike+OR+explosion+OR+security+incident)&hl=en&gl=US&ceid=US:en',
+  ],
+  'Kuwait': [
+    'https://news.google.com/rss/search?q=Kuwait+(military+attack+OR+strike+OR+drone+OR+missile+OR+base+attack)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=Kuwait+(security+threat+OR+explosion+OR+US+military+Kuwait)&hl=en&gl=US&ceid=US:en',
+  ],
+  'Oman': [
+    'https://news.google.com/rss/search?q=Oman+(Hormuz+OR+military+OR+attack+OR+tanker+OR+naval)&hl=en&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=Oman+(strike+OR+drone+OR+missile+OR+security+threat+OR+shipping+attack)&hl=en&gl=US&ceid=US:en',
+  ],
 };
 
 async function refreshConflictCounts() {
@@ -399,19 +436,30 @@ async function refreshConflictCounts() {
   }
 
   await Promise.allSettled(COUNTRY_META.map(async c => {
-    const url = CONFLICT_RSS[c.name];
-    if (!url) return;
+    const urls = CONFLICT_RSS[c.name];
+    if (!urls?.length) return;
     try {
-      const items = await parseFeedUrl(url);
-      if (!items?.length) return;
+      // Fetch both queries in parallel, combine and deduplicate by title
+      const results = await Promise.allSettled(urls.map(u => parseFeedUrl(u)));
+      const seen = new Set();
+      const items = [];
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value?.length) {
+          for (const item of r.value) {
+            const key = (item.title || item.link || '').substring(0, 80);
+            if (!seen.has(key)) { seen.add(key); items.push(item); }
+          }
+        }
+      }
+      if (!items.length) return;
       for (const item of items) {
         const t = (item.title || '').toLowerCase();
-        if (/drone|uav|unmanned/.test(t))                          stats[c.name].drones++;
+        if (/drone|uav|unmanned|shahed/.test(t))                        stats[c.name].drones++;
         else if (/missile|rocket|ballistic|shelling|artillery/.test(t)) stats[c.name].missiles++;
-        else if (/airstrike|air strike|bomb/.test(t))              stats[c.name].airstrikes++;
-        else                                                        stats[c.name].missiles++;
+        else if (/airstrike|air strike|bomb|bombing/.test(t))           stats[c.name].airstrikes++;
+        else                                                             stats[c.name].missiles++;
       }
-      if (items.length > 0) stats[c.name].hasRecentEvents = true;
+      stats[c.name].hasRecentEvents = true;
     } catch {}
   }));
 
