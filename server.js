@@ -141,92 +141,101 @@ const COUNTRY_TTL  = 15 * 60 * 1000;        // 15 min
 
 const ISW_KEYWORDS = /iran|israel|middle east|gaza|lebanon|iraq|hormuz|hezbollah|hamas|houthi|irgc|idf/i;
 
+// Scrape the full body of a single ISW article and return up to 5 key points
+async function fetchISWArticleContent(url) {
+  if (!url || url === '#' || !url.includes('understandingwar.org')) return [];
+  try {
+    const res = await fetchWithTimeout(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+    }, 14000);
+    if (!res.ok) return [];
+    const html = await res.text();
+    const $ = cheerio.load(html);
+
+    const points = [];
+    // ISW uses Drupal — try common content field selectors
+    const bodyEl = $(
+      '.field-name-body .field-items, .field-name-body, .field-items, .node-body, article .content'
+    ).first();
+
+    if (bodyEl.length) {
+      bodyEl.find('p, li').each((_, el) => {
+        const text = $(el).text().replace(/\s+/g, ' ').trim();
+        // Skip short lines and generic headers like "Key Takeaways:"
+        if (text.length > 80 && !/^key takeaway|^sources|^\[.*\]$/i.test(text)) {
+          points.push(text.length > 600 ? text.substring(0, 600) + '…' : text);
+        }
+        if (points.length >= 5) return false;
+      });
+    }
+    return points;
+  } catch { return []; }
+}
+
 async function fetchISW() {
   if (cache.isw.data && Date.now() - cache.isw.ts < ISW_TTL) return cache.isw.data;
 
   const articles = [];
 
-  // Layer 1: RSS (multiple feed URLs)
-  const iswFeeds = [
-    'https://www.understandingwar.org/feeds/all-recent-content',
-    'https://news.google.com/rss/search?q=site:understandingwar.org+Iran+OR+Israel+OR+Gaza&hl=en',
-    'https://news.google.com/rss/search?q="Institute+for+the+Study+of+War"+Middle+East&hl=en',
-  ];
-
-  for (const feedUrl of iswFeeds) {
-    if (articles.length >= 10) break;
-    try {
-      const items = await parseFeedUrl(feedUrl);
-      if (items?.length) {
-        for (const item of items) {
-          const text = `${item.title || ''} ${item.description || ''} ${item.categories?.join(' ') || ''}`;
-          // Always enforce Middle East keyword filter regardless of feed source
-          if (ISW_KEYWORDS.test(text)) {
-            const url = item.link || item.guid || '#';
-            if (!articles.find(a => a.url === url)) {
-              articles.push({
-                title: stripHtml(item.title || 'ISW Report'),
-                url,
-                date: item.pubDate || item.isoDate || null,
-                excerpt: extractExcerpt(item),
-                source: feedUrl.includes('understandingwar.org') ? 'ISW RSS' : 'ISW via Google News',
-              });
-            }
+  // Layer 1: HTML scrape of the ISW Iran updates listing page
+  try {
+    const res = await fetchWithTimeout('https://www.understandingwar.org/backgrounders/iran-updates', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+    });
+    if (res.ok) {
+      const html = await res.text();
+      const $ = cheerio.load(html);
+      $('article, .views-row, .node').each((_, el) => {
+        if (articles.length >= 5) return false;
+        const titleEl = $(el).find('h2 a, h3 a, .title a').first();
+        const title = titleEl.text().trim();
+        const href = titleEl.attr('href');
+        const dateEl = $(el).find('time, .date-display-single').first();
+        const excerpt = $(el).find('p').first().text().trim();
+        if (title && href) {
+          const url = href.startsWith('http') ? href : `https://www.understandingwar.org${href}`;
+          if (!articles.find(a => a.url === url)) {
+            articles.push({ title, url, date: dateEl.attr('datetime') || dateEl.text().trim() || null, excerpt: excerpt.substring(0, 300) || '', source: 'ISW', keyPoints: [] });
           }
-          if (articles.length >= 10) break;
         }
-      }
-    } catch (e) {
-      console.error(`[ISW] Feed error (${feedUrl}):`, e.message);
-    }
-  }
-
-  // Layer 2: HTML scrape if RSS is stale or insufficient
-  const oldestAllowed = Date.now() - 6 * 60 * 60 * 1000;
-  const rssIsStale = articles.length === 0 || parseDate(articles[0]?.date) < oldestAllowed;
-
-  if (rssIsStale || articles.length < 5) {
-    try {
-      const res = await fetchWithTimeout('https://www.understandingwar.org/backgrounders/iran-updates', {
-        headers: { 'User-Agent': 'Mozilla/5.0 AppleWebKit/537.36' },
       });
-      if (res.ok) {
-        const html = await res.text();
-        const $ = cheerio.load(html);
+    }
+  } catch (e) { console.error('[ISW] Listing scrape error:', e.message); }
 
-        $('article, .views-row, .node, .field-content').each((_, el) => {
-          const titleEl = $(el).find('h2 a, h3 a, .title a').first();
-          const title = titleEl.text().trim();
-          const href = titleEl.attr('href');
-          const dateEl = $(el).find('time, .date-display-single, [class*="date"]').first();
-          const excerpt = $(el).find('p').first().text().trim();
-
-          if (title && href) {
-            const url = href.startsWith('http') ? href : `https://www.understandingwar.org${href}`;
-            if (!articles.find(a => a.url === url)) {
-              articles.push({
-                title,
-                url,
-                date: dateEl.attr('datetime') || dateEl.text().trim() || null,
-                excerpt: excerpt.substring(0, 300) || 'Read the full report.',
-                source: 'ISW HTML',
-              });
+  // Layer 2: RSS fallback if listing scrape failed
+  if (articles.length < 3) {
+    const iswFeeds = [
+      'https://www.understandingwar.org/feeds/all-recent-content',
+      'https://news.google.com/rss/search?q=site:understandingwar.org+Iran+OR+Israel+OR+Gaza&hl=en',
+    ];
+    for (const feedUrl of iswFeeds) {
+      if (articles.length >= 5) break;
+      try {
+        const items = await parseFeedUrl(feedUrl);
+        if (items?.length) {
+          for (const item of items) {
+            if (ISW_KEYWORDS.test(`${item.title || ''} ${item.description || ''}`)) {
+              const url = item.link || item.guid || '#';
+              if (!articles.find(a => a.url === url)) {
+                articles.push({ title: stripHtml(item.title || 'ISW Report'), url, date: item.pubDate || item.isoDate || null, excerpt: extractExcerpt(item), source: 'ISW RSS', keyPoints: [] });
+              }
             }
+            if (articles.length >= 5) break;
           }
-          if (articles.length >= 10) return false;
-        });
-      }
-    } catch (e) {
-      console.error('[ISW] HTML scrape error:', e.message);
+        }
+      } catch {}
     }
   }
 
-  // Sort by date desc
-  articles.sort((a, b) => parseDate(b.date) - parseDate(a.date));
-  const result = articles.slice(0, 10);
+  // Layer 3: Fetch full article content for each (parallel, with individual timeouts)
+  await Promise.allSettled(articles.map(async (article) => {
+    article.keyPoints = await fetchISWArticleContent(article.url);
+  }));
 
+  articles.sort((a, b) => parseDate(b.date) - parseDate(a.date));
+  const result = articles.slice(0, 5);
   cache.isw = { data: result, ts: Date.now() };
-  console.log(`[ISW] Fetched ${result.length} articles`);
+  console.log(`[ISW] Fetched ${result.length} articles with full content`);
   return result;
 }
 
@@ -353,118 +362,63 @@ async function refreshACLED() {
 // ─── GDELT API ────────────────────────────────────────────────────────────────
 // Free, no key needed, updates every 15 min. Provides media-derived event counts.
 
-const GDELT_BASE = 'https://api.gdeltproject.org/api/v2/doc/doc';
-
-function parseGDELTDate(str) {
-  if (!str) return 0;
-  // Format: 20260314T123000Z
-  const m = str.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
-  if (m) return new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`).getTime();
-  return new Date(str).getTime() || 0;
-}
+// ─── Conflict counter (Google News RSS) ──────────────────────────────────────
+// Replaces GDELT — uses the same Google News RSS that already works for country news.
+// Counts conflict-keyword articles per country as a proxy for strike activity.
 
 function inferEventType(title) {
   const t = (title || '').toLowerCase();
-  if (/drone|uav|unmanned/.test(t))                  return 'Drone/UAV Strike';
-  if (/missile|rocket|ballistic/.test(t))             return 'Missile/Rocket Attack';
-  if (/shelling|artillery/.test(t))                   return 'Shelling/Artillery';
-  if (/airstrike|air strike|bomb/.test(t))            return 'Airstrike';
+  if (/drone|uav|unmanned/.test(t))           return 'Drone/UAV Strike';
+  if (/missile|rocket|ballistic/.test(t))      return 'Missile/Rocket Attack';
+  if (/shelling|artillery/.test(t))            return 'Shelling/Artillery';
+  if (/airstrike|air strike|bomb/.test(t))     return 'Airstrike';
   return 'Military Incident';
 }
 
-// Country keyword map for attributing GDELT articles to countries
-const COUNTRY_KEYWORDS = {
-  'Israel':                 /\bisrael(i)?\b|\bidf\b|\btel aviv\b/i,
-  'Iran':                   /\biran(ian)?\b|\birgc\b|\bkhamenei\b|\bteheran\b|\btehran\b/i,
-  'Lebanon':                /\blebanon\b|\bhezbollah\b|\bbeirut\b/i,
-  'Iraq':                   /\biraq(i)?\b|\bbaghdad\b/i,
-  'Palestine':              /\bgaza\b|\bpalestine\b|\bpalestinian\b|\brafah\b|\bwest bank\b|\bhamас\b|\bhamas\b/i,
-  'United States':          /\bpentagon\b|\bcentcom\b|\buses? (forces|military|troops|navy|carrier)\b/i,
-  'Saudi Arabia':           /\bsaudi\b|\briyadh\b/i,
-  'United Arab Emirates':   /\buae\b|\babu dhabi\b|\bdubai\b/i,
-  'Qatar':                  /\bqatar\b|\bdoha\b/i,
-  'Bahrain':                /\bbahrain\b|\bmanama\b/i,
-  'Kuwait':                 /\bkuwait\b/i,
-  'Oman':                   /\boman\b|\bmuscat\b/i,
+// Per-country Google News RSS queries specifically for conflict activity
+const CONFLICT_RSS = {
+  'Israel':                 'https://news.google.com/rss/search?q=Israel+(missile+OR+drone+OR+airstrike+OR+attack+OR+bombing+OR+IDF+OR+strike)&hl=en&gl=US&ceid=US:en',
+  'Iran':                   'https://news.google.com/rss/search?q=Iran+(missile+OR+drone+OR+attack+OR+IRGC+OR+strike+OR+nuclear)&hl=en&gl=US&ceid=US:en',
+  'Lebanon':                'https://news.google.com/rss/search?q=Lebanon+(missile+OR+Hezbollah+OR+airstrike+OR+attack+OR+bombing)&hl=en&gl=US&ceid=US:en',
+  'Iraq':                   'https://news.google.com/rss/search?q=Iraq+(militia+OR+attack+OR+drone+OR+missile+OR+strike)&hl=en&gl=US&ceid=US:en',
+  'Palestine':              'https://news.google.com/rss/search?q=Gaza+(attack+OR+airstrike+OR+bombing+OR+missile+OR+strike+OR+Hamas)&hl=en&gl=US&ceid=US:en',
+  'United States':          'https://news.google.com/rss/search?q=US+military+(Middle+East+OR+airstrike+OR+strike+OR+Pentagon+OR+CENTCOM)&hl=en&gl=US&ceid=US:en',
+  'Saudi Arabia':           'https://news.google.com/rss/search?q="Saudi+Arabia"+(missile+OR+drone+OR+attack+OR+Houthi+OR+military)&hl=en&gl=US&ceid=US:en',
+  'United Arab Emirates':   'https://news.google.com/rss/search?q=UAE+(attack+OR+missile+OR+drone+OR+military+OR+security)&hl=en&gl=US&ceid=US:en',
+  'Qatar':                  'https://news.google.com/rss/search?q=Qatar+(military+OR+base+OR+attack+OR+security+OR+US+base)&hl=en&gl=US&ceid=US:en',
+  'Bahrain':                'https://news.google.com/rss/search?q=Bahrain+(military+OR+navy+OR+attack+OR+US+fleet)&hl=en&gl=US&ceid=US:en',
+  'Kuwait':                 'https://news.google.com/rss/search?q=Kuwait+(military+OR+attack+OR+security+OR+US+base)&hl=en&gl=US&ceid=US:en',
+  'Oman':                   'https://news.google.com/rss/search?q=Oman+(military+OR+Hormuz+OR+attack+OR+security)&hl=en&gl=US&ceid=US:en',
 };
 
-async function fetchGDELTAll(attempt = 0) {
-  const query = `(Israel OR Iran OR Gaza OR Lebanon OR Iraq OR "Saudi Arabia" OR Hezbollah OR Houthi OR Hamas OR IRGC) (missile OR drone OR airstrike OR shelling OR bombing OR "rocket attack" OR "military strike")`;
-  const qs = new URLSearchParams({
-    query,
-    mode: 'artlist',
-    format: 'json',
-    timespan: '30d',
-    maxrecords: '250',
-  });
-  try {
-    const res = await fetchWithTimeout(`${GDELT_BASE}?${qs}`, {}, 25000);
-    if (!res.ok) return [];
-    const text = await res.text();
-    if (!text || !text.trim().startsWith('{')) {
-      // Rate limited — wait and retry once
-      if (attempt === 0) {
-        console.log('[GDELT] Rate limited, retrying in 8s…');
-        await new Promise(r => setTimeout(r, 8000));
-        return fetchGDELTAll(1);
-      }
-      return [];
-    }
-    const json = JSON.parse(text);
-    return json.articles || [];
-  } catch (e) {
-    console.error('[GDELT]', e.message);
-    return [];
-  }
-}
-
-async function refreshGDELT() {
+async function refreshConflictCounts() {
   if (cache.gdelt.data && Date.now() - cache.gdelt.ts < GDELT_TTL) return cache.gdelt.data;
 
-  const articles = await fetchGDELTAll();
-  const cutoff48h = Date.now() - 2 * 24 * 60 * 60 * 1000;
-
-  // Initialise stats for every country
   const stats = {};
   for (const c of COUNTRY_META) {
-    stats[c.name] = { missiles: 0, drones: 0, airstrikes: 0, last48hIncidents: [], hasRecentEvents: false, dataSource: 'GDELT' };
+    stats[c.name] = { missiles: 0, drones: 0, airstrikes: 0, hasRecentEvents: false, dataSource: 'News RSS' };
   }
 
-  for (const a of articles) {
-    const title = a.title || '';
-    const ts    = parseGDELTDate(a.seendate);
-    const t     = title.toLowerCase();
-
-    // Attribute to country(ies)
-    const matched = COUNTRY_META.filter(c => COUNTRY_KEYWORDS[c.name]?.test(title));
-    if (matched.length === 0) continue;
-
-    // Categorise event type
-    let cat;
-    if (/drone|uav|unmanned/.test(t))                         cat = 'drones';
-    else if (/missile|rocket|ballistic|shelling|artillery/.test(t)) cat = 'missiles';
-    else if (/airstrike|air strike|bomb/.test(t))             cat = 'airstrikes';
-    else                                                       cat = 'missiles'; // general conflict → missiles bucket
-
-    for (const c of matched) {
-      stats[c.name][cat]++;
-      if (ts > cutoff48h) {
-        if (stats[c.name].last48hIncidents.length < 5) {
-          stats[c.name].last48hIncidents.push({
-            date: new Date(ts).toISOString().split('T')[0],
-            type: inferEventType(title),
-            notes: title,
-            url: a.url,
-            source: a.domain,
-          });
-        }
-        stats[c.name].hasRecentEvents = true;
+  await Promise.allSettled(COUNTRY_META.map(async c => {
+    const url = CONFLICT_RSS[c.name];
+    if (!url) return;
+    try {
+      const items = await parseFeedUrl(url);
+      if (!items?.length) return;
+      for (const item of items) {
+        const t = (item.title || '').toLowerCase();
+        if (/drone|uav|unmanned/.test(t))                          stats[c.name].drones++;
+        else if (/missile|rocket|ballistic|shelling|artillery/.test(t)) stats[c.name].missiles++;
+        else if (/airstrike|air strike|bomb/.test(t))              stats[c.name].airstrikes++;
+        else                                                        stats[c.name].missiles++;
       }
-    }
-  }
+      if (items.length > 0) stats[c.name].hasRecentEvents = true;
+    } catch {}
+  }));
 
   cache.gdelt = { data: stats, ts: Date.now() };
-  console.log(`[GDELT] Refreshed — ${articles.length} articles → attributed to ${COUNTRY_META.length} countries`);
+  const total = Object.values(stats).reduce((s, c) => s + c.missiles + c.drones + c.airstrikes, 0);
+  console.log(`[ConflictRSS] Refreshed — ${total} total mentions across ${COUNTRY_META.length} countries`);
   return stats;
 }
 
@@ -670,12 +624,20 @@ async function refreshAll() {
   const useACLED = !!(process.env.ACLED_EMAIL && process.env.ACLED_KEY);
   await Promise.allSettled([
     fetchISW(),
-    useACLED ? refreshACLED() : refreshGDELT(),
+    useACLED ? refreshACLED() : refreshConflictCounts(),
     fetchHormuzNews(),
     ...COUNTRY_META.map(c => fetchCountryNews(c.name)),
   ]);
   broadcastUpdate();
   console.log('[REFRESH] Done');
+}
+
+let _refreshPromise = null;
+function startRefresh() {
+  if (!_refreshPromise) {
+    _refreshPromise = refreshAll().catch(console.error).finally(() => { _refreshPromise = null; });
+  }
+  return _refreshPromise;
 }
 
 // ─── Express middleware ───────────────────────────────────────────────────────
@@ -693,21 +655,22 @@ app.get('/api/all', async (req, res) => {
   try {
     const useACLED = !!(process.env.ACLED_EMAIL && process.env.ACLED_KEY);
 
-    const [isw, conflictData, newsapiData, hormuzNews] = await Promise.all([
-      fetchISW(),
-      useACLED ? refreshACLED() : refreshGDELT(),
-      refreshNewsAPI(),
-      fetchHormuzNews(),
-    ]);
+    // If cache is completely cold, wait for the in-progress refresh
+    const isCold = !cache.isw.data && !cache.gdelt.data && !cache.acled.data;
+    if (isCold) await startRefresh();
+
+    // Serve from cache — always fast after the first load
+    const isw = cache.isw.data || [];
+    const conflictData = useACLED ? cache.acled.data : cache.gdelt.data;
+    const newsapiData = cache.newsapi.data || {};
+    const hormuzNews = cache.hormuz.data || [];
 
     const countryNewsAll = {};
-    await Promise.allSettled(
-      COUNTRY_META.map(async c => {
-        countryNewsAll[c.name] = await fetchCountryNews(c.name);
-      })
-    );
+    for (const c of COUNTRY_META) {
+      countryNewsAll[c.name] = cache.countryNews.data[c.name]?.articles || [];
+    }
 
-    // Normalise: ACLED returns { stats, hormuzEvents }, GDELT returns stats directly
+    // Normalise: ACLED returns { stats, hormuzEvents }, conflict RSS returns stats directly
     const conflictStats = useACLED ? (conflictData?.stats || {}) : (conflictData || {});
     const hormuzEvents  = useACLED ? (conflictData?.hormuzEvents || []) : [];
 
@@ -814,19 +777,18 @@ app.get('/events', (req, res) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   const useACLED = !!(process.env.ACLED_EMAIL && process.env.ACLED_KEY);
   console.log(`\n🌐 Middle East War Intelligence Dashboard`);
   console.log(`   Running at: http://localhost:${PORT}`);
-  console.log(`   Conflict data: ${useACLED ? '✓ ACLED' : '✓ GDELT (free, no key)'}`);
-  console.log(`   Fatalities:    ${process.env.UCDP_TOKEN ? '✓ UCDP' : '— add UCDP_TOKEN for verified fatality counts'}`);
+  console.log(`   Conflict data: ${useACLED ? '✓ ACLED' : '✓ News RSS (Google News)'}`);
   console.log(`   NewsAPI:       ${process.env.NEWSAPI_KEY ? '✓ configured' : '— optional, add NEWSAPI_KEY'}\n`);
 
-  // Initial data load
-  await refreshAll();
+  // Initial data load (non-blocking — serve from cache ASAP)
+  startRefresh();
 
   // Scheduled refreshes
-  setInterval(refreshAll, 5 * 60 * 1000);         // 5 min — general
+  setInterval(startRefresh, 5 * 60 * 1000);        // 5 min — general
   setInterval(fetchISW, ISW_TTL);                  // 30 min — ISW
   setInterval(refreshNewsAPI, NEWSAPI_TTL);        // 4 hours — NewsAPI
 });
