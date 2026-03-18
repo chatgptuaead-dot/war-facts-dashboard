@@ -454,10 +454,10 @@ async function refreshConflictCounts() {
       if (!items.length) return;
       for (const item of items) {
         const t = (item.title || '').toLowerCase();
-        if (/drone|uav|unmanned|shahed/.test(t))                        stats[c.name].drones++;
-        else if (/missile|rocket|ballistic|shelling|artillery/.test(t)) stats[c.name].missiles++;
-        else if (/airstrike|air strike|bomb|bombing/.test(t))           stats[c.name].airstrikes++;
-        else                                                             stats[c.name].missiles++;
+        if (/drone|uav|unmanned|shahed/.test(t))                              stats[c.name].drones++;
+        else if (/missile|rocket|ballistic|shelling|artillery/.test(t))       stats[c.name].missiles++;
+        else if (/airstrike|air.strike|bomb|bombing|strike|attack|explosion/.test(t)) stats[c.name].airstrikes++;
+        // no catch-all — only count articles that explicitly mention conflict events
       }
       stats[c.name].hasRecentEvents = true;
     } catch {}
